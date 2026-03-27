@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &1
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8b18d347b68b5834ab54f30aad8be3ea, type: 3}
+  m_Name: XRPackageMetadataStore
+  m_EditorClassIdentifier: ::PPtr<$XRPackageMetadata>[]
+  m_InstalledXRSdkMetadata:
+  - packageName: com.unity.xr.oculus
+    packageId: com.unity.xr.oculus
+    settingsType: Unity.XR.Oculus.OculusSettings
+    loaderType: Unity.XR.Oculus.OculusLoader
+    buildTargetGroup: Android

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vrex 管理者ログイン</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f1a;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 16px;
+      padding: 48px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 24px 64px rgba(0,0,0,.5);
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .logo h1 { color: #7c6af7; font-size: 2rem; font-weight: 800; letter-spacing: -1px; }
+    .logo p  { color: #888; font-size: .85rem; margin-top: 4px; }
+    label { display: block; color: #aaa; font-size: .8rem; margin-bottom: 6px; }
+    input {
+      width: 100%;
+      background: #0f0f1a;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      color: #fff;
+      padding: 12px 14px;
+      font-size: .95rem;
+      margin-bottom: 18px;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input:focus { border-color: #7c6af7; }
+    button {
+      width: 100%;
+      background: #7c6af7;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 13px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    button:hover { background: #6a58e0; }
+    .error {
+      background: rgba(239,68,68,.1);
+      border: 1px solid rgba(239,68,68,.3);
+      color: #f87171;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 18px;
+      font-size: .875rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <h1>Vrex</h1>
+      <p>管理ダッシュボード</p>
+    </div>
+
+    <%= if @error do %>
+      <div class="error"><%= @error %></div>
+    <% end %>
+
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
+      <div>
+        <label>メールアドレス</label>
+        <input type="email" name="email" required autofocus placeholder="admin@example.com" />
+      </div>
+      <div>
+        <label>パスワード</label>
+        <input type="password" name="password" required placeholder="••••••••" />
+      </div>
+      <button type="submit">ログイン</button>
+    </form>
+  </div>
+</body>
+</html>

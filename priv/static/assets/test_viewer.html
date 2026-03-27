@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script type="module" src="/assets/js/model-viewer.min.js"></script>
+  <style>
+    body { background: #010a01; color: #00e676; font-family: monospace; padding: 20px; display:flex; gap:30px; }
+    .box { flex: 1; }
+    #status1,#status2 { margin: 10px 0; padding: 10px; border: 1px solid #0c280c; }
+    model-viewer { width: 100%; height: 300px; display: block; background: #111; border: 2px solid #00e676; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h3>GLB: earth_window.glb</h3>
+    <div id="status1">読み込み中...</div>
+    <model-viewer id="mv1" src="/glb/earth_window.glb" auto-rotate camera-controls alt="earth window" loading="eager"></model-viewer>
+    <div id="log1" style="font-size:.75rem;color:#888;margin-top:6px;"></div>
+  </div>
+  <div class="box">
+    <h3>VRM: test_avatar.vrm</h3>
+    <div id="status2">読み込み中...</div>
+    <model-viewer id="mv2" src="/vrm/test_avatar.vrm" auto-rotate camera-controls alt="test avatar" loading="eager"></model-viewer>
+    <div id="log2" style="font-size:.75rem;color:#888;margin-top:6px;"></div>
+  </div>
+  <script>
+    [['mv1','status1','log1','glb/earth_window.glb'],['mv2','status2','log2','vrm/test_avatar.vrm']].forEach(([id,sid,lid,path])=>{
+      const mv=document.getElementById(id), st=document.getElementById(sid), lg=document.getElementById(lid);
+      mv.addEventListener('load',()=>{st.textContent='✓ 読み込み成功';st.style.color='#00e676';});
+      mv.addEventListener('error',e=>{st.textContent='✗ error: '+JSON.stringify(e.detail);st.style.color='#f44';});
+      fetch('/'+path).then(r=>lg.textContent='fetch → '+r.status+' '+r.headers.get('content-type'));
+    });
+  </script>
+</body>
+</html>
