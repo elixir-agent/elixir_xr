@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -14,6 +15,20 @@ public class LocalPlayerAvatar : MonoBehaviour
     [SerializeField] private GameObject _leftHandProxy;
     [SerializeField] private GameObject _rightHandProxy;
 
+    [Header("Hand Rotation Offsets")]
+    [SerializeField] private Vector3 _leftHandRotationOffsetEuler = new Vector3(0f, 0f, -90f);
+    [SerializeField] private Vector3 _rightHandRotationOffsetEuler = new Vector3(0f, 0f, 90f);
+    [SerializeField] private Vector3 _handFacingCorrectionEuler = new Vector3(90f, 0f, 0f);
+
+    [Header("Hand Pose")]
+    [SerializeField] private float _fingerProximalCurlAngle = 55f;
+    [SerializeField] private float _fingerIntermediateCurlAngle = 72f;
+    [SerializeField] private float _fingerDistalCurlAngle = 48f;
+    [SerializeField] private float _indexPinchBias = 0.85f;
+    [SerializeField] private float _thumbOppositionAngle = 28f;
+    [SerializeField] private float _thumbCurlAngle = 36f;
+    [SerializeField] private float _thumbTipCurlAngle = 18f;
+
     private Transform _hmdAnchor;
     private Transform _trackingSpace;
     private Vector3 _stableBodyXZ;
@@ -27,6 +42,9 @@ public class LocalPlayerAvatar : MonoBehaviour
     private Quaternion _leftUpperArmLocalRotation;
     private Quaternion _leftLowerArmLocalRotation;
     private Quaternion _leftHandLocalRotation;
+    private readonly Dictionary<HumanBodyBones, Quaternion> _fingerRestLocalRotations = new();
+    private Quaternion _rightHandBasisLocalRotation = Quaternion.identity;
+    private Quaternion _leftHandBasisLocalRotation = Quaternion.identity;
 
     private struct ArmBones
     {
@@ -36,6 +54,24 @@ public class LocalPlayerAvatar : MonoBehaviour
         public Transform Hand;
         public bool IsValid =>
             Shoulder != null && UpperArm != null && LowerArm != null && Hand != null;
+    }
+
+    private readonly struct FingerCurlSegment
+    {
+        public FingerCurlSegment(HumanBodyBones bone, Vector3 axis, float angleScale, Vector3? secondaryAxis = null, float secondaryScale = 0f)
+        {
+            Bone = bone;
+            Axis = axis;
+            AngleScale = angleScale;
+            SecondaryAxis = secondaryAxis ?? Vector3.zero;
+            SecondaryScale = secondaryScale;
+        }
+
+        public HumanBodyBones Bone { get; }
+        public Vector3 Axis { get; }
+        public float AngleScale { get; }
+        public Vector3 SecondaryAxis { get; }
+        public float SecondaryScale { get; }
     }
 
     void Start()
@@ -53,11 +89,14 @@ public class LocalPlayerAvatar : MonoBehaviour
     {
         GetControllerPose(OVRInput.Controller.RTouch, out Vector3 rPos, out Quaternion rRot);
         GetControllerPose(OVRInput.Controller.LTouch, out Vector3 lPos, out Quaternion lRot);
+        float rightGrip = GetHandPoseStrength(OVRInput.Controller.RTouch, true);
+        float leftGrip = GetHandPoseStrength(OVRInput.Controller.LTouch, false);
 
         UpdateProxy(_rightHandProxy, rPos, rRot);
         UpdateProxy(_leftHandProxy, lPos, lRot);
 
         var avatar = _loader?.LoadedAvatar;
+        UpdateProxyVisibility(avatar == null);
         if (avatar == null || _hmdAnchor == null) return;
 
         var anim = avatar.GetComponent<Animator>();
@@ -104,6 +143,8 @@ public class LocalPlayerAvatar : MonoBehaviour
             HumanBodyBones.RightLowerArm, HumanBodyBones.RightHand, rPos, rRot, true, avatar.transform);
         ApplyControllerArmIK(anim, HumanBodyBones.LeftShoulder, HumanBodyBones.LeftUpperArm,
             HumanBodyBones.LeftLowerArm, HumanBodyBones.LeftHand, lPos, lRot, false, avatar.transform);
+        ApplyHandPose(anim, true, rightGrip);
+        ApplyHandPose(anim, false, leftGrip);
     }
 
     void EnsureAvatarProxies()
@@ -147,11 +188,34 @@ public class LocalPlayerAvatar : MonoBehaviour
         rot = ts.rotation * lr;
     }
 
+    float GetHandPoseStrength(OVRInput.Controller controller, bool isRight)
+    {
+        OVRInput.Axis1D gripAxis = isRight
+            ? OVRInput.Axis1D.SecondaryHandTrigger
+            : OVRInput.Axis1D.PrimaryHandTrigger;
+        OVRInput.Axis1D indexAxis = isRight
+            ? OVRInput.Axis1D.SecondaryIndexTrigger
+            : OVRInput.Axis1D.PrimaryIndexTrigger;
+
+        float grip = OVRInput.Get(gripAxis, controller);
+        float index = OVRInput.Get(indexAxis, controller);
+        return Mathf.Clamp01(Mathf.Max(grip, index));
+    }
+
     static void UpdateProxy(GameObject proxy, Vector3 pos, Quaternion rot)
     {
         if (proxy == null) return;
         proxy.transform.position = pos;
         proxy.transform.rotation = rot;
+    }
+
+    void UpdateProxyVisibility(bool visible)
+    {
+        if (_leftHandProxy != null && _leftHandProxy.activeSelf != visible)
+            _leftHandProxy.SetActive(visible);
+
+        if (_rightHandProxy != null && _rightHandProxy.activeSelf != visible)
+            _rightHandProxy.SetActive(visible);
     }
 
     public async void LoadAvatarFromUrl(string url, string avatarId)
@@ -201,10 +265,10 @@ public class LocalPlayerAvatar : MonoBehaviour
         float maxReach = Mathf.Max(upperLength + lowerLength - 0.002f, upperLength);
         Vector3 targetPos = upperPos + Vector3.ClampMagnitude(toController, maxReach);
 
-        SolveArmTwoBoneIK(bones, targetPos, controllerRotation, isRight, avatarRoot);
+        SolveArmTwoBoneIK(animator, bones, targetPos, controllerRotation, isRight, avatarRoot);
     }
 
-    void SolveArmTwoBoneIK(ArmBones bones, Vector3 targetPos, Quaternion targetRot, bool isRight, Transform avatarRoot)
+    void SolveArmTwoBoneIK(Animator animator, ArmBones bones, Vector3 targetPos, Quaternion targetRot, bool isRight, Transform avatarRoot)
     {
         Vector3 upperPos = bones.UpperArm.position;
         Vector3 lowerPos = bones.LowerArm.position;
@@ -247,7 +311,73 @@ public class LocalPlayerAvatar : MonoBehaviour
         if (desiredLowerDir.sqrMagnitude > 0.0001f)
             bones.LowerArm.rotation = Quaternion.FromToRotation(currentLowerDir, desiredLowerDir) * bones.LowerArm.rotation;
 
-        bones.Hand.rotation = targetRot;
+        bones.Hand.rotation = GetHandTargetRotation(animator, bones.Hand, targetRot, isRight, avatarRoot);
+    }
+
+    Quaternion GetHandTargetRotation(Animator animator, Transform hand, Quaternion controllerRotation, bool isRight, Transform avatarRoot)
+    {
+        if (!TryGetHandBasisLocalRotation(animator, hand, isRight, out Quaternion handBasisLocalRotation))
+        {
+            Vector3 offsetEuler = isRight ? _rightHandRotationOffsetEuler : _leftHandRotationOffsetEuler;
+            return controllerRotation
+                * Quaternion.Euler(offsetEuler)
+                * Quaternion.Euler(_handFacingCorrectionEuler);
+        }
+
+        Vector3 desiredFingerDir = controllerRotation * Vector3.forward;
+        Vector3 desiredPalmDir = controllerRotation * (isRight ? Vector3.left : Vector3.right);
+        Quaternion basisWorldRotation = hand.rotation * handBasisLocalRotation;
+        Vector3 currentFingerDir = basisWorldRotation * Vector3.forward;
+        Vector3 currentPalmDir = basisWorldRotation * Vector3.up;
+
+        Quaternion alignFinger = Quaternion.FromToRotation(currentFingerDir, desiredFingerDir);
+        Vector3 desiredPalmOnPlane = Vector3.ProjectOnPlane(desiredPalmDir, desiredFingerDir).normalized;
+        Vector3 currentPalmOnPlane = Vector3.ProjectOnPlane(alignFinger * currentPalmDir, desiredFingerDir).normalized;
+
+        if (currentPalmOnPlane.sqrMagnitude < 0.0001f || desiredPalmOnPlane.sqrMagnitude < 0.0001f)
+            return ApplyHandRollCorrection(alignFinger * hand.rotation, desiredFingerDir, isRight);
+
+        float twistAngle = Vector3.SignedAngle(currentPalmOnPlane, desiredPalmOnPlane, desiredFingerDir);
+        Quaternion twist = Quaternion.AngleAxis(twistAngle, desiredFingerDir);
+        return ApplyHandRollCorrection(twist * alignFinger * hand.rotation, desiredFingerDir, isRight);
+    }
+
+    Quaternion ApplyHandRollCorrection(Quaternion rotation, Vector3 fingerAxis, bool isRight)
+    {
+        if (!isRight) return rotation;
+        return Quaternion.AngleAxis(180f, fingerAxis) * rotation;
+    }
+
+    bool TryGetHandBasisLocalRotation(Animator animator, Transform hand, bool isRight, out Quaternion handBasisLocalRotation)
+    {
+        handBasisLocalRotation = isRight ? _rightHandBasisLocalRotation : _leftHandBasisLocalRotation;
+        if (hand == null) return false;
+        if (handBasisLocalRotation != Quaternion.identity) return true;
+
+        var index = animator.GetBoneTransform(isRight ? HumanBodyBones.RightIndexProximal : HumanBodyBones.LeftIndexProximal);
+        var middle = animator.GetBoneTransform(isRight ? HumanBodyBones.RightMiddleProximal : HumanBodyBones.LeftMiddleProximal);
+        var ring = animator.GetBoneTransform(isRight ? HumanBodyBones.RightRingProximal : HumanBodyBones.LeftRingProximal);
+        var little = animator.GetBoneTransform(isRight ? HumanBodyBones.RightLittleProximal : HumanBodyBones.LeftLittleProximal);
+        if (index == null || middle == null || ring == null || little == null || hand == null) return false;
+
+        Vector3 handPos = hand.position;
+        Vector3 fingerDir = (
+            (index.position - handPos) +
+            (middle.position - handPos) +
+            (ring.position - handPos) +
+            (little.position - handPos)).normalized;
+        if (fingerDir.sqrMagnitude < 0.0001f) return false;
+
+        Vector3 acrossPalm = little.position - index.position;
+        Vector3 palmDir = Vector3.Cross(fingerDir, acrossPalm).normalized;
+        if (palmDir.sqrMagnitude < 0.0001f) return false;
+
+        handBasisLocalRotation = Quaternion.Inverse(hand.rotation) * Quaternion.LookRotation(fingerDir, palmDir);
+        if (isRight)
+            _rightHandBasisLocalRotation = handBasisLocalRotation;
+        else
+            _leftHandBasisLocalRotation = handBasisLocalRotation;
+        return true;
     }
 
     void EnsureArmRestPose(Animator animator)
@@ -264,8 +394,35 @@ public class LocalPlayerAvatar : MonoBehaviour
             ref _leftUpperArmLocalRotation,
             ref _leftLowerArmLocalRotation,
             ref _leftHandLocalRotation);
+        CacheFingerRestPose(animator);
+        CacheHandBasis(animator, true);
+        CacheHandBasis(animator, false);
 
         _armRestPoseInitialized = true;
+    }
+
+    void CacheHandBasis(Animator animator, bool isRight)
+    {
+        var hand = animator.GetBoneTransform(isRight ? HumanBodyBones.RightHand : HumanBodyBones.LeftHand);
+        if (hand == null) return;
+        if (TryGetHandBasisLocalRotation(animator, hand, isRight, out Quaternion basis))
+        {
+            if (isRight)
+                _rightHandBasisLocalRotation = basis;
+            else
+                _leftHandBasisLocalRotation = basis;
+        }
+    }
+
+    void CacheFingerRestPose(Animator animator)
+    {
+        _fingerRestLocalRotations.Clear();
+        foreach (var bone in FingerBones)
+        {
+            var t = animator.GetBoneTransform(bone);
+            if (t != null)
+                _fingerRestLocalRotations[bone] = t.localRotation;
+        }
     }
 
     void CacheArmRestPose(Animator animator, bool isRight,
@@ -295,5 +452,142 @@ public class LocalPlayerAvatar : MonoBehaviour
             bones.LowerArm.localRotation = _leftLowerArmLocalRotation;
             bones.Hand.localRotation = _leftHandLocalRotation;
         }
+    }
+
+    void ApplyHandPose(Animator animator, bool isRight, float curlStrength)
+    {
+        if (!_armRestPoseInitialized) return;
+        float mirroredSide = isRight ? 1f : -1f;
+
+        ApplyFingerCurl(animator, isRight ? RightThumbCurl : LeftThumbCurl, curlStrength, mirroredSide);
+        ApplyFingerCurl(animator, isRight ? RightIndexCurl : LeftIndexCurl, curlStrength * _indexPinchBias, mirroredSide);
+        ApplyFingerCurl(animator, isRight ? RightMiddleCurl : LeftMiddleCurl, curlStrength, mirroredSide);
+        ApplyFingerCurl(animator, isRight ? RightRingCurl : LeftRingCurl, curlStrength, mirroredSide);
+        ApplyFingerCurl(animator, isRight ? RightLittleCurl : LeftLittleCurl, curlStrength, mirroredSide);
+    }
+
+    void ApplyFingerCurl(Animator animator, FingerCurlSegment[] segments, float curlStrength, float mirroredSide)
+    {
+        foreach (var segment in segments)
+        {
+            var finger = animator.GetBoneTransform(segment.Bone);
+            if (finger == null || !_fingerRestLocalRotations.TryGetValue(segment.Bone, out Quaternion rest)) continue;
+
+            Quaternion curlRotation = Quaternion.AngleAxis(segment.AngleScale * curlStrength, segment.Axis);
+            Quaternion secondaryRotation = segment.SecondaryScale == 0f
+                ? Quaternion.identity
+                : Quaternion.AngleAxis(segment.SecondaryScale * curlStrength * mirroredSide, segment.SecondaryAxis);
+            finger.localRotation = rest * secondaryRotation * curlRotation;
+        }
+    }
+
+    static readonly HumanBodyBones[] FingerBones =
+    {
+        HumanBodyBones.LeftThumbProximal,
+        HumanBodyBones.LeftThumbIntermediate,
+        HumanBodyBones.LeftThumbDistal,
+        HumanBodyBones.LeftIndexProximal,
+        HumanBodyBones.LeftIndexIntermediate,
+        HumanBodyBones.LeftIndexDistal,
+        HumanBodyBones.LeftMiddleProximal,
+        HumanBodyBones.LeftMiddleIntermediate,
+        HumanBodyBones.LeftMiddleDistal,
+        HumanBodyBones.LeftRingProximal,
+        HumanBodyBones.LeftRingIntermediate,
+        HumanBodyBones.LeftRingDistal,
+        HumanBodyBones.LeftLittleProximal,
+        HumanBodyBones.LeftLittleIntermediate,
+        HumanBodyBones.LeftLittleDistal,
+        HumanBodyBones.RightThumbProximal,
+        HumanBodyBones.RightThumbIntermediate,
+        HumanBodyBones.RightThumbDistal,
+        HumanBodyBones.RightIndexProximal,
+        HumanBodyBones.RightIndexIntermediate,
+        HumanBodyBones.RightIndexDistal,
+        HumanBodyBones.RightMiddleProximal,
+        HumanBodyBones.RightMiddleIntermediate,
+        HumanBodyBones.RightMiddleDistal,
+        HumanBodyBones.RightRingProximal,
+        HumanBodyBones.RightRingIntermediate,
+        HumanBodyBones.RightRingDistal,
+        HumanBodyBones.RightLittleProximal,
+        HumanBodyBones.RightLittleIntermediate,
+        HumanBodyBones.RightLittleDistal
+    };
+
+    FingerCurlSegment[] LeftThumbCurl => new[]
+    {
+        new FingerCurlSegment(HumanBodyBones.LeftThumbProximal, Vector3.right, _thumbCurlAngle, Vector3.up, _thumbOppositionAngle),
+        new FingerCurlSegment(HumanBodyBones.LeftThumbIntermediate, Vector3.right, _thumbCurlAngle * 0.8f, Vector3.up, _thumbOppositionAngle * 0.45f),
+        new FingerCurlSegment(HumanBodyBones.LeftThumbDistal, Vector3.right, _thumbTipCurlAngle)
+    };
+
+    FingerCurlSegment[] RightThumbCurl => new[]
+    {
+        new FingerCurlSegment(HumanBodyBones.RightThumbProximal, Vector3.right, _thumbCurlAngle, Vector3.up, _thumbOppositionAngle),
+        new FingerCurlSegment(HumanBodyBones.RightThumbIntermediate, Vector3.right, _thumbCurlAngle * 0.8f, Vector3.up, _thumbOppositionAngle * 0.45f),
+        new FingerCurlSegment(HumanBodyBones.RightThumbDistal, Vector3.right, _thumbTipCurlAngle)
+    };
+
+    FingerCurlSegment[] LeftIndexCurl => CreateFingerCurlChain(
+        HumanBodyBones.LeftIndexProximal,
+        HumanBodyBones.LeftIndexIntermediate,
+        HumanBodyBones.LeftIndexDistal,
+        -8f);
+
+    FingerCurlSegment[] RightIndexCurl => CreateFingerCurlChain(
+        HumanBodyBones.RightIndexProximal,
+        HumanBodyBones.RightIndexIntermediate,
+        HumanBodyBones.RightIndexDistal,
+        -8f);
+
+    FingerCurlSegment[] LeftMiddleCurl => CreateFingerCurlChain(
+        HumanBodyBones.LeftMiddleProximal,
+        HumanBodyBones.LeftMiddleIntermediate,
+        HumanBodyBones.LeftMiddleDistal,
+        -3f);
+
+    FingerCurlSegment[] RightMiddleCurl => CreateFingerCurlChain(
+        HumanBodyBones.RightMiddleProximal,
+        HumanBodyBones.RightMiddleIntermediate,
+        HumanBodyBones.RightMiddleDistal,
+        -3f);
+
+    FingerCurlSegment[] LeftRingCurl => CreateFingerCurlChain(
+        HumanBodyBones.LeftRingProximal,
+        HumanBodyBones.LeftRingIntermediate,
+        HumanBodyBones.LeftRingDistal,
+        5f);
+
+    FingerCurlSegment[] RightRingCurl => CreateFingerCurlChain(
+        HumanBodyBones.RightRingProximal,
+        HumanBodyBones.RightRingIntermediate,
+        HumanBodyBones.RightRingDistal,
+        5f);
+
+    FingerCurlSegment[] LeftLittleCurl => CreateFingerCurlChain(
+        HumanBodyBones.LeftLittleProximal,
+        HumanBodyBones.LeftLittleIntermediate,
+        HumanBodyBones.LeftLittleDistal,
+        11f);
+
+    FingerCurlSegment[] RightLittleCurl => CreateFingerCurlChain(
+        HumanBodyBones.RightLittleProximal,
+        HumanBodyBones.RightLittleIntermediate,
+        HumanBodyBones.RightLittleDistal,
+        11f);
+
+    FingerCurlSegment[] CreateFingerCurlChain(
+        HumanBodyBones proximal,
+        HumanBodyBones intermediate,
+        HumanBodyBones distal,
+        float splayAngle)
+    {
+        return new[]
+        {
+            new FingerCurlSegment(proximal, Vector3.right, _fingerProximalCurlAngle, Vector3.up, splayAngle),
+            new FingerCurlSegment(intermediate, Vector3.right, _fingerIntermediateCurlAngle),
+            new FingerCurlSegment(distal, Vector3.right, _fingerDistalCurlAngle)
+        };
     }
 }

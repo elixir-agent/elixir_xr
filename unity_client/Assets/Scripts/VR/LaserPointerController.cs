@@ -13,6 +13,7 @@ public class LaserPointerController : MonoBehaviour
     [SerializeField] private float maxDistance = 10f;
     [SerializeField] private Color laserColor = Color.cyan;
     [SerializeField] private LayerMask hitLayers = ~0;
+    [SerializeField] private Vector3 laserOriginOffset = new Vector3(0f, -0.01f, 0.03f);
 
     [Header("Grab")]
     [SerializeField] private float grabDistance = 0.35f;
@@ -215,7 +216,7 @@ public class LaserPointerController : MonoBehaviour
 
     Vector3 GetControllerOrigin(Vector3 controllerPos, Quaternion controllerRot)
     {
-        return controllerPos + controllerRot * new Vector3(0f, -0.01f, 0.09f);
+        return controllerPos + controllerRot * laserOriginOffset;
     }
 
     void UpdateGrabbedItemLabel(Transform target)
